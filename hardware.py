@@ -27,90 +27,94 @@
 
 from machine import Pin, I2C
 import time
-
-
-class Channel:
-
-    def __init__(self):
-        self.fsr = "4.096"
-        self.sps = "128"
-
-    def setFSR(self, value):
-        self.fsr = value
-
-    def getFSR(self):
-        return self.fsr
-    
-    def setSPS(self, value):
-        self.sps = value
-
-    def getSPS(self):
-        return self.sps
-    
+import struct
     
 class ADS1115:
 
     Adc_register = {'CONV_REG':0x00, 'CONF_REG':0x01, 'LO_TRESH':0x02, 'HI_TRESH':0x03}
-    Conf_Reg = bytearray(b'\x42\x80')
-    Next_channel = True
-    Next_value= b'\x00'
-    Adc_fsr = 4.096
-    nrOfChannels = 4
-    channel = []
-    FSR = {"6.144":b'\x40',
-            "4.096":b'\x42',
-            "2.048":b'\x44',
-            "1.024":b'\x46',
-            "0.512":b'\x48',
-            "0.256":b'\x4A'}
+    chanMasks = [0x04, 0x05, 0x06, 0x07]
+    FSRmask = {"6.144":0x00,
+            "4.096":0x02,
+            "2.048":0x04,
+            "1.024":0x06,
+            "0.512":0x08,
+            "0.256":0x0A}
 
-    SPS = {"8":b'\x00',
-            "16":b'\x20',
-            "32":b'\x40',
-            "64":b'\x60',
-            "128":b'\x80',
-            "250":b'\xA0',
-            "475":b'\xC0',
-            "860":b'\xE0'}
+    SPSmask = {"8":0x00,
+            "16":0x20,
+            "32":0x40,
+            "64":0x60,
+            "128":0x80,
+            "250":0xA0,
+            "475":0xC0,
+            "860":0xE0}
 
-    def __init__(self, channel):
-        self.fsr = "4.096"
-        self.sps = "128"
+    def __init__(self):
         self.i2c = None
         self.pin = None
+        self.fsr = "4.096"
+        self.sps = "128"
+        self.channel = 0
         self.i2cID = None
         self.initiated = 0
         self.deviceList = None
-        self.Next_value
+        self.Next_value = 0
+        self.Adc_fsr = 4.096
 
     def init(self, i2cID, i2c, pin):
         self.i2c = i2c
         self.pin = pin
         self.i2cID = i2cID
+        self.configureModuleFSR(self.fsr)
         self.pin.callback (Pin.IRQ_FALLING, self.readCurrentValue)
         self.initiated = 1
         print("I2C device connected!")
 
-    def configureModule(self):
-        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['CONF_REG'], bytes(self.Conf_Reg))
-        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['HI_TRESH'], b'\x80\x00') # ustawienie sygnalizacji zakonczenia konwersji
+    def configureModuleFSR(self, fsr):
+        self.fsr= fsr
+        regH = (self.chanMasks[self.channel] << 4) | self.FSRmask[self.fsr]
+        regL = self.SPSmask[self.sps]
+        reg = bytes([regH,regL])
+        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['CONF_REG'], reg)
+        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['HI_TRESH'], b'\x80\x00')
         self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['LO_TRESH'], b'\x00\x00')
+    
+    def configureModuleSPS(self, sps):
+        self.sps= sps
+        regH = self.FSRmask[self.fsr]
+        regL = self.SPSmask[self.sps]
+        reg = bytes([regH,regL])
+        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['CONF_REG'], reg)
 
-    def initChannels(self):
-        for n in range(self.nrOfChannels):
-            self.channel[n] = Channel()
+    def configureChannel(self, channel):
+        self.channel = channel
+        regH = (self.chanMasks[self.channel] << 4) | self.FSRmask[self.fsr]
+        regL = self.SPSmask[self.sps]
+        reg = bytes([regH,regL])
+        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['CONF_REG'], reg)
     
     def readCurrentValue(self, val):
-        self.Next_value = self.i2c.readfrom_mem(self.i2cID[0], self.Adc_register['CONV_REG'], 2)
-        print(self.Next_value)
+        self.newVal = 1
+
+    def getVal(self):
+        samples = 16
+        sum = 0
+        cnt = 0
+        while cnt<samples:
+            if self.newVal == 1:
+                value = self.i2c.readfrom_mem(self.i2cID[0], self.Adc_register['CONV_REG'], 2)
+                self.newVal = 0
+                decoded = int.from_bytes(value,'big')
+                sum += decoded
+                cnt+=1
+            
+        div = sum/samples
+        val = ((float(self.fsr)/32768)*div)
+        return val
 
     def continuousRead(self, channel, callback):
         if self.initiated:
-            sps = self.SPS[self.sps]
-            fsr = self.FSR[self.fsr]
-            self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['CONF_REG'], (b''.join((fsr,sps))))
-            result = ((float(self.fsr)/32768)*int.from_bytes(self.Next_value,'big'))
+            result = self.getVal()
             callback(channel, result)
-            time.sleep(0.15)
         else:
             print("Module not initiated!")

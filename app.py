@@ -8,18 +8,16 @@ from machine import Pin, I2C
 
 class App:
 
-    sliderFSR = '2'
-    sliderSPS = '3'
-    buttonCh0 = '4'
-    buttonCh1 = '5'
+    sliderFSR = '8'
+    sliderSPS = '9'
+    buttonsList = ['4','5','6','7']
+    sliderFSRlist = ["6.144", "4.096", "2.048", "1.024", "0.512", "0.256"]
+    sliderSPSlist = ["8", "16", "32", "64", "128", "250", "475", "860"]
 
     def __init__(self,server,module):
         self.server = server
         self.module = module
-        self.button0 = None
-        self.button1 = None
-        self.FSRval = "4.096"
-        self.SPSval = "128"
+        self.buttons = [0,0,0,0]
         self.i2c = None
         self.pin = None
 
@@ -34,9 +32,14 @@ class App:
         self.server.startMqttService(self.sub_cb)
         self.server.mqtt.connect()
 
-        #ustawienie domyslnych wartosci na sliderach
+        #ustawienie domyslnych wartosci na serwerze
         self.server.mqttPublishData(2,int(self.sliderFSR))
         self.server.mqttPublishData(5,int(self.sliderSPS))
+        self.server.mqttPublishData(0,int(self.buttonsList[0]))
+        self.server.mqttPublishData(0,int(self.buttonsList[1]))
+        self.server.mqttPublishData(0,int(self.buttonsList[2]))
+        self.server.mqttPublishData(0,int(self.buttonsList[3]))
+
 
     def scanI2C(self):
         self.i2c = i2c = I2C(0, I2C.MASTER, baudrate=400000)
@@ -64,40 +67,26 @@ class App:
         self.server.mqttPublishResponse(sequence)
 
     def classifyData(self, receivedData):
+        data = int(receivedData[1])
         if (receivedData[0] ==  self.sliderFSR):
-            if receivedData[1] == '1':
-                self.module.setFSR("6.144")
-            elif receivedData[1] == '2':
-                self.module.setFSR("4.096")
-            elif receivedData[1] == '3':
-                self.module.setFSR("2.048")
-            elif receivedData[1] == '4':
-                self.module.setFSR("1.024")
-            elif receivedData[1] == '5':
-                self.module.setFSR("0.512")
-            elif receivedData[1] == '6':
-                self.module.setFSR("0.256")
+            self.module.fsr = self.sliderFSRlist[data]
+            self.module.configureModuleFSR(self.module.fsr)
+            print("FSR set to: " + self.module.fsr)
+
         elif (receivedData[0] ==  self.sliderSPS):
-            if receivedData[1] == '1':
-                self.module.setSPS("8")
-            elif receivedData[1] == '2':
-                self.module.setSPS("16")
-            elif receivedData[1] == '3':
-                self.module.setSPS("32")
-            elif receivedData[1] == '4':
-                self.module.setSPS("64")
-            elif receivedData[1] == '5':
-                self.module.setSPS("128")
-            elif receivedData[1] == '6':
-                self.module.setSPS("250")
-            elif receivedData[1] == '7':
-                self.module.setSPS("475")
-            elif receivedData[1] == '8':
-                self.module.setSPS("860")
-        elif (receivedData[0] ==  self.buttonCh0):
-            self.button0 = int(receivedData[1])
-        elif (receivedData[0] ==  self.buttonCh1):
-            self.button1 = int(receivedData[1])
+            self.module.sps = self.sliderSPSlist[data]
+            self.module.configureModuleSPS(self.module.sps)
+            print("SPS set to: " + self.module.sps)
+
+        elif any(receivedData[0] in s for s in self.buttonsList):
+            position = [i for i,x in enumerate(self.buttonsList) if x == receivedData[0]]
+            self.buttons[position[0]] = data
+            if (data == 1):
+                state = 'on'
+            else:
+                state = 'off'
+            string = "Channel: " + str(position[0]) + ' ' + state
+            print(string)
 
     def read_cb(self, channel, result):
         read = 'ADC - ' + str(channel) + ': ' + str(result)
@@ -106,14 +95,16 @@ class App:
 
     def loop(self):
         while 1:
-            if self.button0 == 1:
-                self.module.continuousRead(0, self.read_cb)
-            if self.button1 == 1:
-                self.module.continuousRead(1, self.read_cb)
-            
-            self.server.mqttSubscribe(2)
-            self.server.mqttSubscribe(3)
-            self.server.mqttSubscribe(4)
-            self.server.mqttSubscribe(5)
+            for n in range(len(self.buttons)):
+                if self.buttons[n] == 1:
+                    self.module.configureChannel(n)
+                    time.sleep(0.15)
+                    self.module.continuousRead(n, self.read_cb)
+
+            for n in range(len(self.buttonsList)):
+                self.server.mqttSubscribe(self.buttonsList[n])
+
+            self.server.mqttSubscribe(self.sliderFSR)
+            self.server.mqttSubscribe(self.sliderSPS)
 
         self.server.mqtt.disconnect()
