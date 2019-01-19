@@ -1,3 +1,5 @@
+# Dawid Gizan & Piotr Biernacki 2019
+
 # Domyslnie  FSR = 4,096 ORAZ  SPS= 128. FSR przyjmowac moze wartosci : 0,256V ; 0,512 ; 1,024 ; 2,048; 4,096; 6,144
 # czestotliwosc probkowania 8 SPS, 16  32 64 128 250 475 860
 #
@@ -27,6 +29,25 @@ from machine import Pin, I2C
 import time
 
 
+class Channel:
+
+    def __init__(self):
+        self.fsr = "4.096"
+        self.sps = "128"
+
+    def setFSR(self, value):
+        self.fsr = value
+
+    def getFSR(self):
+        return self.fsr
+    
+    def setSPS(self, value):
+        self.sps = value
+
+    def getSPS(self):
+        return self.sps
+    
+    
 class ADS1115:
 
     Adc_register = {'CONV_REG':0x00, 'CONF_REG':0x01, 'LO_TRESH':0x02, 'HI_TRESH':0x03}
@@ -34,6 +55,8 @@ class ADS1115:
     Next_channel = True
     Next_value= b'\x00'
     Adc_fsr = 4.096
+    nrOfChannels = 4
+    channel = []
     FSR = {"6.144":b'\x40',
             "4.096":b'\x42',
             "2.048":b'\x44',
@@ -50,51 +73,42 @@ class ADS1115:
             "475":b'\xC0',
             "860":b'\xE0'}
 
-    def __init__(self):
+    def __init__(self, channel):
         self.fsr = "4.096"
         self.sps = "128"
         self.i2c = None
         self.pin = None
+        self.i2cID = None
         self.initiated = 0
         self.deviceList = None
         self.Next_value
 
-    def init(self):
-        self.i2c = i2c = I2C(0, I2C.MASTER, baudrate=400000)
-        self.pin = p_in = Pin('P23', mode=Pin.IN, pull=Pin.PULL_UP)
-        self.deviceList = self.i2c.scan()
-        if len(self.deviceList) == 0:
-            print("No I2C device connected!")
-            return False
-        else:
-            print("I2C device connected!")
-            i2c.writeto_mem(self.deviceList[0], self.Adc_register['CONF_REG'], bytes(self.Conf_Reg))
-            i2c.writeto_mem(self.deviceList[0], self.Adc_register['HI_TRESH'], b'\x80\x00') # ustawienie sygnalizacji zakonczenia konwersji
-            i2c.writeto_mem(self.deviceList[0], self.Adc_register['LO_TRESH'], b'\x00\x00')
-            time.sleep(1)
-            self.pin.callback (Pin.IRQ_FALLING, self.readCurrentValue)
-            self.initiated = 1
+    def init(self, i2cID, i2c, pin):
+        self.i2c = i2c
+        self.pin = pin
+        self.i2cID = i2cID
+        self.pin.callback (Pin.IRQ_FALLING, self.readCurrentValue)
+        self.initiated = 1
+        print("I2C device connected!")
 
-    def setFSR(self, value):
-        self.fsr = value
+    def configureModule(self):
+        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['CONF_REG'], bytes(self.Conf_Reg))
+        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['HI_TRESH'], b'\x80\x00') # ustawienie sygnalizacji zakonczenia konwersji
+        self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['LO_TRESH'], b'\x00\x00')
 
-    def getFSR(self):
-        return self.fsr
-    
-    def setSPS(self, value):
-        self.sps = value
-
-    def getSPS(self):
-        return self.sps
+    def initChannels(self):
+        for n in range(self.nrOfChannels):
+            self.channel[n] = Channel()
     
     def readCurrentValue(self, val):
-        self.Next_value = self.i2c.readfrom_mem(self.deviceList[0], self.Adc_register['CONV_REG'], 2)
+        self.Next_value = self.i2c.readfrom_mem(self.i2cID[0], self.Adc_register['CONV_REG'], 2)
+        print(self.Next_value)
 
     def continuousRead(self, channel, callback):
         if self.initiated:
             sps = self.SPS[self.sps]
             fsr = self.FSR[self.fsr]
-            self.i2c.writeto_mem(self.deviceList[0], self.Adc_register['CONF_REG'], (b''.join((fsr,sps))))
+            self.i2c.writeto_mem(self.i2cID[0], self.Adc_register['CONF_REG'], (b''.join((fsr,sps))))
             result = ((float(self.fsr)/32768)*int.from_bytes(self.Next_value,'big'))
             callback(channel, result)
             time.sleep(0.15)

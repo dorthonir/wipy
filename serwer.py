@@ -1,3 +1,5 @@
+# Piotr Biernacki 2019
+
 import network
 import time
 import machine

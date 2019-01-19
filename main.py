@@ -1,3 +1,5 @@
+# Piotr Biernacki 2019
+
 import hardware
 import serwer
 import app
