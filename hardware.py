@@ -1,6 +1,3 @@
-from machine import Pin, I2C
-import time
-
 # Domyslnie  FSR = 4,096 ORAZ  SPS= 128. FSR przyjmowac moze wartosci : 0,256V ; 0,512 ; 1,024 ; 2,048; 4,096; 6,144
 # czestotliwosc probkowania 8 SPS, 16  32 64 128 250 475 860
 #
@@ -26,25 +23,40 @@ import time
 # po wyliczeniu nowego Conf_Reg zmienic się musi takze Adc_channel w taki sposób, że na początku kolejnych zawsze 
 # będzie b'\x4...', b'\x5...', b'\x6...' , b'\x7...' (najłatwiej chyba będzie dodawac 16 do kolejnych Adc_channel(n)(1)
 
+from machine import Pin, I2C
+import time
+
+
 class ADS1115:
+
     Adc_register = {'CONV_REG':0x00, 'CONF_REG':0x01, 'LO_TRESH':0x02, 'HI_TRESH':0x03}
     Conf_Reg = bytearray(b'\x42\x80')
-    Adc_channel = (bytearray(b'\x42\x80'), bytearray(b'\x52\x80'), bytearray(b'\x62\x80'), bytearray(b'\x72\x80'))
-    Sel_channel = 0
-    Num_of_channels = 2 # ilosc wykorzystywanych kanalow, tez mogla by byc ustawiana przez uzytkownika
     Next_channel = True
     Next_value= b'\x00'
     Adc_fsr = 4.096
+    FSR = {"6.144":b'\x40',
+            "4.096":b'\x42',
+            "2.048":b'\x44',
+            "1.024":b'\x46',
+            "0.512":b'\x48',
+            "0.256":b'\x4A'}
 
-    def __init__(self, fsr, sps):
-        self.fsr = fsr
-        self.sps = sps
+    SPS = {"8":b'\x00',
+            "16":b'\x20',
+            "32":b'\x40',
+            "64":b'\x60',
+            "128":b'\x80',
+            "250":b'\xA0',
+            "475":b'\xC0',
+            "860":b'\xE0'}
+
+    def __init__(self):
+        self.fsr = "4.096"
+        self.sps = "128"
         self.i2c = None
         self.pin = None
         self.initiated = 0
-        self.continuous = 0
         self.deviceList = None
-        self.Next_channel
         self.Next_value
 
     def init(self):
@@ -57,7 +69,6 @@ class ADS1115:
         else:
             print("I2C device connected!")
             i2c.writeto_mem(self.deviceList[0], self.Adc_register['CONF_REG'], bytes(self.Conf_Reg))
-            # print(i2c.readfrom_mem(self.deviceList[0], Adc_register['CONF_REG'], 2))
             i2c.writeto_mem(self.deviceList[0], self.Adc_register['HI_TRESH'], b'\x80\x00') # ustawienie sygnalizacji zakonczenia konwersji
             i2c.writeto_mem(self.deviceList[0], self.Adc_register['LO_TRESH'], b'\x00\x00')
             time.sleep(1)
@@ -77,33 +88,15 @@ class ADS1115:
         return self.sps
     
     def readCurrentValue(self, val):
-        if self.Next_channel == True:
-            self.Next_value = self.i2c.readfrom_mem(self.deviceList[0], self.Adc_register['CONV_REG'], 2)
-            self.Next_channel = False
-        else:
-            pass
+        self.Next_value = self.i2c.readfrom_mem(self.deviceList[0], self.Adc_register['CONV_REG'], 2)
 
-    def callbackA(self, channel, result):
-        print(result)
-        
-    def continuousRead(self, callback):
-        print('3')
-        if (self.initiated == 1):
-            self.continuous = 1
-            while (self.continuous == 1):
-                if self.Next_channel == False:
-                    self.Sel_channel += 1
-                    if self.Sel_channel == self.Num_of_channels:
-                        self.Sel_channel = 0
-                    self.i2c.writeto_mem(self.deviceList[0], self.Adc_register['CONF_REG'], bytes(self.Adc_channel[self.Sel_channel]))
-                    result = ((self.Adc_fsr/32768)*int.from_bytes(self.Next_value,'big'))
-                    self.callbackA(self.Sel_channel, result)
-                    time.sleep(1)
-                    self.Next_channel = True
-                else:
-                    pass
+    def continuousRead(self, channel, callback):
+        if self.initiated:
+            sps = self.SPS[self.sps]
+            fsr = self.FSR[self.fsr]
+            self.i2c.writeto_mem(self.deviceList[0], self.Adc_register['CONF_REG'], (b''.join((fsr,sps))))
+            result = ((float(self.fsr)/32768)*int.from_bytes(self.Next_value,'big'))
+            callback(channel, result)
+            time.sleep(0.15)
         else:
-            print("Module was not initiated!")
-
-    def startContinuousRead(self):
-        self.continuousRead(self.callbackA)
+            print("Module not initiated!")
